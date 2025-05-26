@@ -1,2 +1,4 @@
 1001|Carl|Johnson|USA, California, Los Santos, Grove Street 4, ap. 6|90765431014|2569038.93|0.00
 1002|Niko|Bellic|New York, Aloquin, Northwestern Street 81, ap. 69|98162412017|1009036.33|5.04
+
+
