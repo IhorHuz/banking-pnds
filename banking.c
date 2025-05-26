@@ -4,6 +4,15 @@
 #include <ctype.h>
 #include <stdbool.h>
 
+#define FILENAME "accounts.txt"
+
+void flush_input()
+{
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF)
+        ;
+}
+
 typedef struct
 {
     int account_number;
@@ -93,13 +102,7 @@ int read_int()
     }
 }
 
-void flush_input()
-{
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF)
-        ;
-}
-
+// NOTE: will be obsolete
 void ensure_account_capacity()
 {
     if (account_count >= accounts_capacity)
@@ -108,7 +111,7 @@ void ensure_account_capacity()
         Account *new_accounts = realloc(accounts, new_capacity * sizeof(Account));
         if (!new_accounts)
         {
-            printf("Memory allocation failed. Cannot create more accounts.\n");
+            printf("[E] Memory allocation failed. Cannot create more accounts.\n");
             return;
         }
         accounts = new_accounts;
@@ -116,13 +119,14 @@ void ensure_account_capacity()
     }
 }
 
-void create_account()
+// TODO: make it just append line with new Account to .txt
+int create_account()
 {
     ensure_account_capacity();
     if (account_count >= accounts_capacity)
     {
         printf("Cannot create more accounts due to memory constraints.\n");
-        return;
+        return -1;
     }
 
     Account new_acc;
@@ -172,8 +176,11 @@ void create_account()
     new_acc.loan = 0.0;
     accounts[account_count++] = new_acc;
     printf("Account created successfully.\n");
+
+    return 0;
 }
 
+// NOTE: may become obsolete once all moved to .txt operations, no caching
 void save_accounts_to_file(const char *filename)
 {
     FILE *file = fopen(filename, "w");
@@ -193,60 +200,108 @@ void save_accounts_to_file(const char *filename)
     fclose(file);
 }
 
-void load_accounts_from_file(const char *filename)
-{
-    FILE *file = fopen(filename, "r");
-    if (!file)
-    {
-        printf("No existing account data found. Starting fresh.\n");
-        return;
+Account *load_account_from_file(int account_number) {
+    FILE *file = fopen(FILENAME, "r");
+    if (!file) {
+        printf("[E] No existing account data found. Starting fresh.\n");
+        return NULL;
     }
 
-    Account temp;
+    Account *account = malloc(sizeof(Account));
+    if (!account) {
+        printf("[E] Memory allocation failed.\n");
+        fclose(file);
+        return NULL;
+    }
+
     while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
-                  &temp.account_number, temp.name, temp.surname, temp.address,
-                  temp.pesel, &temp.balance, &temp.loan) == 7)
-    {
-        ensure_account_capacity();
-        if (account_count >= accounts_capacity)
-        {
-            printf("Warning: Not all accounts loaded due to memory constraints.\n");
-            break;
-        }
-
-        accounts[account_count++] = temp;
-        if (temp.account_number >= next_account_number)
-        {
-            next_account_number = temp.account_number + 1;
+                  &account->account_number, account->name, account->surname,
+                  account->address, account->pesel, &account->balance, &account->loan) == 7) {
+        if (account->account_number == account_number) {
+            printf("[D] Found!\tAccount #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
+                   account->account_number, account->name, account->surname,
+                   account->pesel, account->balance, account->loan);
+            fclose(file);
+            return account;
         }
     }
 
+    free(account);
     fclose(file);
+    return NULL;
 }
 
 void list_accounts()
 {
     printf("\n--- List of Accounts ---\n");
-    if (account_count == 0)
+
+    FILE *file = fopen(FILENAME, "r");
+    if (!file)
     {
-        printf("No accounts to display.\n");
+        printf("[E] No existing account data found. Starting fresh.\n");
         return;
     }
 
-    for (int i = 0; i < account_count; ++i)
+    Account a;
+    while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                  &a.account_number, a.name, a.surname, a.address,
+                  a.pesel, &a.balance, &a.loan) == 7)
     {
-        Account a = accounts[i];
         printf("Account #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
-               a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
+            a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
     }
+
+    fclose(file);
+
+    printf("\n--- End ---\n");
 }
 
-Account *find_account_by_number(int number)
-{
-    for (int i = 0; i < account_count; ++i)
-        if (accounts[i].account_number == number)
-            return &accounts[i];
-    return NULL;
+// TODO: refactor to use read from file
+Account *find_account_by_number(int number) {
+    return load_account_from_file(number);
+}
+
+int update_account_in_file(const char *filename, const Account *updated_acc) {
+    FILE *input = fopen(filename, "r");
+    FILE *temp = fopen("temp_accounts.txt", "w");
+    if (!input || !temp) {
+        printf("[E] Failed to open files.\n");
+        if (input) fclose(input);
+        if (temp) fclose(temp);
+        return 0;
+    }
+
+    Account a;
+    int updated = 0;
+    while (fscanf(input, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                  &a.account_number, a.name, a.surname, a.address,
+                  a.pesel, &a.balance, &a.loan) == 7)
+    {
+        if (a.account_number == updated_acc->account_number) {
+            fprintf(temp, "%d|%s|%s|%s|%s|%.2lf|%.2lf\n",
+                    updated_acc->account_number, updated_acc->name,
+                    updated_acc->surname, updated_acc->address,
+                    updated_acc->pesel, updated_acc->balance,
+                    updated_acc->loan);
+            updated = 1;
+        } else {
+            fprintf(temp, "%d|%s|%s|%s|%s|%.2lf|%.2lf\n",
+                    a.account_number, a.name, a.surname, a.address,
+                    a.pesel, a.balance, a.loan);
+        }
+    }
+
+    fclose(input);
+    fclose(temp);
+
+    if (updated) {
+        remove(filename);
+        rename("temp_accounts.txt", filename);
+    } else {
+        remove("temp_accounts.txt");
+    }
+
+    return updated;
 }
 
 void search_accounts()
@@ -368,39 +423,43 @@ bool confirm_operation(const char *operation)
     return (response == 'y' || response == 'Y');
 }
 
-void deposit()
-{
+void deposit() {
     int num = -1;
-    while (num == -1)
-    {
+    while (num == -1) {
         printf("Enter account number: ");
         num = read_int();
     }
 
     Account *acc = find_account_by_number(num);
-    if (!acc)
-    {
+    if (!acc) {
         printf("Account not found.\n");
-        return;
+        goto exit;
     }
 
     double amt;
     printf("Enter amount to deposit: ");
     scanf("%lf", &amt);
-    if (!is_valid_amount(amt))
-    {
+    if (amt <= 0) {
         printf("Invalid amount.\n");
-        return;
+        goto exit;
     }
 
-    if (!confirm_operation("make a deposit"))
-    {
+    if (!confirm_operation("make a deposit")) {
         printf("Deposit cancelled.\n");
-        return;
+        goto exit;
     }
 
     acc->balance += amt;
-    printf("Deposit successful. New balance: %.2f\n", acc->balance);
+
+    if (update_account_in_file(FILENAME, acc)) {
+        printf("Deposit successful. New balance: %.2f\n", acc->balance);
+    } else {
+        printf("[E] Failed to deposit!\n");
+    }
+
+exit:
+    free(acc);
+    return;
 }
 
 void withdraw()
@@ -435,7 +494,13 @@ void withdraw()
     }
 
     acc->balance -= amt;
-    printf("Withdrawal successful. New balance: %.2f\n", acc->balance);
+    if (update_account_in_file(FILENAME, acc)) {
+        printf("Withdrawal successful. New balance: %.2f\n", acc->balance);
+    } else {
+        printf("[E] Failed to withdraw!\n");
+    }
+
+    free(acc);
 }
 
 void log_transfer(int from, int to, double amount)
@@ -492,6 +557,19 @@ void transfer()
     acc1->balance -= amt;
     acc2->balance += amt;
     log_transfer(from, to, amt);
+
+    if (!update_account_in_file(FILENAME, acc1)) {
+        printf("[E] Failed to transfer acc1!\n");
+        // TODO: handle free()
+    }
+
+    if (!update_account_in_file(FILENAME, acc2)) {
+        printf("[E] Failed to transfer acc2!\n");
+        // TODO: handle free()
+    }
+
+    free(acc1);
+    free(acc2);
     printf("Transfer successful.\n");
 }
 
@@ -532,7 +610,14 @@ void take_loan()
     double total = amt + (amt * rate / 100);
     acc->loan += total;
     acc->balance += amt;
-    printf("Loan granted. Total debt: %.2f. New balance: %.2f\n", acc->loan, acc->balance);
+
+    if (update_account_in_file(FILENAME, acc)) {
+        printf("Loan granted. Total debt: %.2f. New balance: %.2f\n", acc->loan, acc->balance);
+    } else {
+        printf("[E] Failed to take a loan!\n");
+    }
+
+    free(acc);
 }
 
 void pay_debt()
@@ -575,14 +660,6 @@ void pay_debt()
     }
 }
 
-void free_accounts()
-{
-    free(accounts);
-    accounts = NULL;
-    account_count = 0;
-    accounts_capacity = 0;
-}
-
 void menu()
 {
     int choice;
@@ -597,10 +674,11 @@ void menu()
         switch (choice)
         {
         case 1:
-            create_account();
+            if (create_account())
+                printf("[E] Failed to create account\n");
             break;
         case 2:
-            list_accounts();
+            list_accounts(FILENAME);
             break;
         case 3:
             search_accounts();
@@ -631,11 +709,8 @@ void menu()
 
 int main()
 {
-    load_accounts_from_file("accounts.txt");
-
     menu();
 
-    save_accounts_to_file("accounts.txt");
-    free_accounts();
+    save_accounts_to_file(FILENAME);
     return 0;
 }
