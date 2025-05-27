@@ -4,21 +4,33 @@
 #include <ctype.h>
 #include <stdbool.h>
 
+#define FILENAME "accounts.txt"
+#define TRANSFERS_FILENAME "transfers.txt"
+#define NAME_MAX_LEN 50
+#define SURNAME_MAX_LEN 50
+#define ADDRESS_MAX_LEN 200
+#define PESEL_MAX_LEN 12
+#define ACCOUNT_NUMBER_START 1000
+#define INTEREST_MAX 100
+#define INPUT_BUFFER_SIZE 100
+
+void flush_input()
+{
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF)
+        ;
+}
+
 typedef struct
 {
     int account_number;
-    char name[50];
-    char surname[50];
-    char address[200];
-    char pesel[12];
+    char name[NAME_MAX_LEN];
+    char surname[SURNAME_MAX_LEN];
+    char address[ADDRESS_MAX_LEN];
+    char pesel[PESEL_MAX_LEN];
     double balance;
     double loan;
 } Account;
-
-Account *accounts = NULL;
-int account_count = 0;
-int next_account_number = 1001;
-int accounts_capacity = 0;
 
 int is_valid_pesel(const char *pesel)
 {
@@ -33,7 +45,7 @@ int is_valid_pesel(const char *pesel)
 int is_valid_name(const char *name)
 {
     size_t len = strlen(name);
-    if (len == 0 || len > 50)
+    if (len == 0 || len > NAME_MAX_LEN)
         return 0;
     for (size_t i = 0; i < len; ++i)
         if (!isalpha(name[i]) && name[i] != '-' && name[i] != ' ')
@@ -44,7 +56,7 @@ int is_valid_name(const char *name)
 int is_valid_address(const char *address)
 {
     size_t len = strlen(address);
-    if (len == 0 || len > 100)
+    if (len == 0 || len > ADDRESS_MAX_LEN)
         return 0;
     for (size_t i = 0; i < len; ++i)
         if (!isprint(address[i]))
@@ -59,12 +71,12 @@ int is_valid_amount(double amount)
 
 int is_valid_interest(double interest)
 {
-    return interest >= 0 && interest <= 100;
+    return interest >= 0 && interest <= INTEREST_MAX;
 }
 
 int read_int()
 {
-    char buffer[100];
+    char buffer[INPUT_BUFFER_SIZE];
     int value;
     while (1)
     {
@@ -93,40 +105,44 @@ int read_int()
     }
 }
 
-void flush_input()
+int pesel_exists(const char *pesel)
 {
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF)
-        ;
-}
-
-void ensure_account_capacity()
-{
-    if (account_count >= accounts_capacity)
+    FILE *file = fopen(FILENAME, "r");
+    if (!file)
+        return 0;
+    Account a;
+    while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                  &a.account_number, a.name, a.surname, a.address,
+                  a.pesel, &a.balance, &a.loan) == 7)
     {
-        int new_capacity = (accounts_capacity == 0) ? 10 : accounts_capacity * 2;
-        Account *new_accounts = realloc(accounts, new_capacity * sizeof(Account));
-        if (!new_accounts)
+        if (strcmp(a.pesel, pesel) == 0)
         {
-            printf("Memory allocation failed. Cannot create more accounts.\n");
-            return;
+            fclose(file);
+            return 1;
         }
-        accounts = new_accounts;
-        accounts_capacity = new_capacity;
     }
+    fclose(file);
+    return 0;
 }
 
-void create_account()
+int create_account()
 {
-    ensure_account_capacity();
-    if (account_count >= accounts_capacity)
-    {
-        printf("Cannot create more accounts due to memory constraints.\n");
-        return;
-    }
-
     Account new_acc;
-    new_acc.account_number = next_account_number++;
+    int max_account_number = 1000;
+    FILE *file = fopen(FILENAME, "r");
+    if (file)
+    {
+        Account temp;
+        while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                      &temp.account_number, temp.name, temp.surname, temp.address,
+                      temp.pesel, &temp.balance, &temp.loan) == 7)
+        {
+            if (temp.account_number > max_account_number)
+                max_account_number = temp.account_number;
+        }
+        fclose(file);
+    }
+    new_acc.account_number = max_account_number + 1;
     printf("Creating new account (Account number: %d)\n", new_acc.account_number);
 
     printf("Enter name: ");
@@ -161,92 +177,162 @@ void create_account()
     printf("Enter PESEL: ");
     flush_input();
     scanf(" %11s", new_acc.pesel);
+    flush_input();
     while (!is_valid_pesel(new_acc.pesel))
     {
         printf("Invalid PESEL. Try again: ");
         flush_input();
         scanf(" %11s", new_acc.pesel);
+        flush_input();
     }
 
+    while (pesel_exists(new_acc.pesel))
+    {
+        printf("PESEL already exists. Please enter a different PESEL: ");
+        flush_input();
+        scanf(" %11s", new_acc.pesel);
+    }
     new_acc.balance = 0.0;
     new_acc.loan = 0.0;
-    accounts[account_count++] = new_acc;
+
+    file = fopen(FILENAME, "a+");
+    if (!file)
+    {
+        printf("[E] Failed to open file for writing.\n");
+        return -1;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long filesize = ftell(file);
+    if (filesize > 0)
+        fprintf(file, "\n");
+
+    fprintf(file, "%d|%s|%s|%s|%s|%.2f|%.2f",
+            new_acc.account_number, new_acc.name, new_acc.surname,
+            new_acc.address, new_acc.pesel, new_acc.balance, new_acc.loan);
+    fclose(file);
+
     printf("Account created successfully.\n");
+    return 0;
 }
 
-void save_accounts_to_file(const char *filename)
+Account *load_account_from_file(int account_number)
 {
-    FILE *file = fopen(filename, "w");
+    FILE *file = fopen(FILENAME, "r");
     if (!file)
     {
-        printf("Failed to save accounts.\n");
-        return;
+        printf("[E] No existing account data found. Starting fresh.\n");
+        return NULL;
     }
 
-    for (int i = 0; i < account_count; ++i)
+    Account *account = malloc(sizeof(Account));
+    if (!account)
     {
-        Account a = accounts[i];
-        fprintf(file, "%d|%s|%s|%s|%s|%.2f|%.2f\n",
-                a.account_number, a.name, a.surname, a.address, a.pesel, a.balance, a.loan);
+        printf("[E] Memory allocation failed.\n");
+        fclose(file);
+        return NULL;
     }
 
-    fclose(file);
-}
-
-void load_accounts_from_file(const char *filename)
-{
-    FILE *file = fopen(filename, "r");
-    if (!file)
-    {
-        printf("No existing account data found. Starting fresh.\n");
-        return;
-    }
-
-    Account temp;
     while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
-                  &temp.account_number, temp.name, temp.surname, temp.address,
-                  temp.pesel, &temp.balance, &temp.loan) == 7)
+                  &account->account_number, account->name, account->surname,
+                  account->address, account->pesel, &account->balance, &account->loan) == 7)
     {
-        ensure_account_capacity();
-        if (account_count >= accounts_capacity)
+        if (account->account_number == account_number)
         {
-            printf("Warning: Not all accounts loaded due to memory constraints.\n");
-            break;
-        }
-
-        accounts[account_count++] = temp;
-        if (temp.account_number >= next_account_number)
-        {
-            next_account_number = temp.account_number + 1;
+            printf("[D] Found!\tAccount #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
+                   account->account_number, account->name, account->surname,
+                   account->pesel, account->balance, account->loan);
+            fclose(file);
+            return account;
         }
     }
 
+    free(account);
     fclose(file);
+    return NULL;
 }
 
 void list_accounts()
 {
     printf("\n--- List of Accounts ---\n");
-    if (account_count == 0)
+
+    FILE *file = fopen(FILENAME, "r");
+    if (!file)
     {
-        printf("No accounts to display.\n");
+        printf("[E] No existing account data found. Starting fresh.\n");
         return;
     }
 
-    for (int i = 0; i < account_count; ++i)
+    Account a;
+    while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                  &a.account_number, a.name, a.surname, a.address,
+                  a.pesel, &a.balance, &a.loan) == 7)
     {
-        Account a = accounts[i];
         printf("Account #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
                a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
     }
+
+    fclose(file);
+
+    printf("\n--- End ---\n");
 }
 
 Account *find_account_by_number(int number)
 {
-    for (int i = 0; i < account_count; ++i)
-        if (accounts[i].account_number == number)
-            return &accounts[i];
-    return NULL;
+    return load_account_from_file(number);
+}
+
+int update_account_in_file(const char *filename, const Account *updated_acc)
+{
+    FILE *input = fopen(filename, "r");
+    FILE *temp = fopen("temp_accounts.txt", "w");
+    if (!input || !temp)
+    {
+        printf("[E] Failed to open files.\n");
+        if (input)
+            fclose(input);
+        if (temp)
+            fclose(temp);
+        return 0;
+    }
+
+    Account a;
+    int updated = 0;
+    while (fscanf(input, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                  &a.account_number, a.name, a.surname, a.address,
+                  a.pesel, &a.balance, &a.loan) == 7)
+    {
+        if (a.account_number == updated_acc->account_number)
+        {
+            fprintf(temp, "%d|%s|%s|%s|%s|%.2lf|%.2lf\n",
+                    updated_acc->account_number, updated_acc->name,
+                    updated_acc->surname, updated_acc->address,
+                    updated_acc->pesel, updated_acc->balance,
+                    updated_acc->loan);
+            updated = 1;
+        }
+        else
+        {
+            fprintf(temp, "%d|%s|%s|%s|%s|%.2lf|%.2lf\n",
+                    a.account_number, a.name, a.surname, a.address,
+                    a.pesel, a.balance, a.loan);
+        }
+    }
+
+    fclose(input);
+    fclose(temp);
+
+    if (updated)
+    {
+        remove(filename);
+        rename("temp_accounts.txt", filename);
+    }
+    else
+    {
+        remove("temp_accounts.txt");
+    }
+
+    return updated;
 }
 
 void search_accounts()
@@ -264,6 +350,14 @@ void search_accounts()
     flush_input();
 
     int found = 0;
+    FILE *file = fopen(FILENAME, "r");
+    if (!file)
+    {
+        printf("[E] No existing account data found.\n");
+        return;
+    }
+
+    Account a;
 
     switch (option)
     {
@@ -275,15 +369,16 @@ void search_accounts()
             printf("Enter account number: ");
             acc_num = read_int();
         }
-
-        for (int i = 0; i < account_count; ++i)
+        while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                      &a.account_number, a.name, a.surname, a.address,
+                      a.pesel, &a.balance, &a.loan) == 7)
         {
-            if (accounts[i].account_number == acc_num)
+            if (a.account_number == acc_num)
             {
-                Account a = accounts[i];
                 printf("Found: #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
                        a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
                 found = 1;
+                break;
             }
         }
         break;
@@ -292,11 +387,12 @@ void search_accounts()
         printf("Enter name: ");
         fgets(input, sizeof(input), stdin);
         input[strcspn(input, "\n")] = 0;
-        for (int i = 0; i < account_count; ++i)
+        while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                      &a.account_number, a.name, a.surname, a.address,
+                      a.pesel, &a.balance, &a.loan) == 7)
         {
-            if (strcasecmp(accounts[i].name, input) == 0)
+            if (strcasecmp(a.name, input) == 0)
             {
-                Account a = accounts[i];
                 printf("Found: #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
                        a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
                 found = 1;
@@ -307,11 +403,12 @@ void search_accounts()
         printf("Enter surname: ");
         fgets(input, sizeof(input), stdin);
         input[strcspn(input, "\n")] = 0;
-        for (int i = 0; i < account_count; ++i)
+        while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                      &a.account_number, a.name, a.surname, a.address,
+                      a.pesel, &a.balance, &a.loan) == 7)
         {
-            if (strcasecmp(accounts[i].surname, input) == 0)
+            if (strcasecmp(a.surname, input) == 0)
             {
-                Account a = accounts[i];
                 printf("Found: #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
                        a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
                 found = 1;
@@ -322,11 +419,12 @@ void search_accounts()
         printf("Enter address: ");
         fgets(input, sizeof(input), stdin);
         input[strcspn(input, "\n")] = 0;
-        for (int i = 0; i < account_count; ++i)
+        while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                      &a.account_number, a.name, a.surname, a.address,
+                      a.pesel, &a.balance, &a.loan) == 7)
         {
-            if (strcasecmp(accounts[i].address, input) == 0)
+            if (strcasecmp(a.address, input) == 0)
             {
-                Account a = accounts[i];
                 printf("Found: #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
                        a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
                 found = 1;
@@ -337,11 +435,12 @@ void search_accounts()
         printf("Enter PESEL: ");
         fgets(input, sizeof(input), stdin);
         input[strcspn(input, "\n")] = 0;
-        for (int i = 0; i < account_count; ++i)
+        while (fscanf(file, "%d|%49[^|]|%49[^|]|%199[^|]|%11[^|]|%lf|%lf\n",
+                      &a.account_number, a.name, a.surname, a.address,
+                      a.pesel, &a.balance, &a.loan) == 7)
         {
-            if (strcmp(accounts[i].pesel, input) == 0)
+            if (strcmp(a.pesel, input) == 0)
             {
-                Account a = accounts[i];
                 printf("Found: #%d: %s %s, PESEL: %s, Balance: %.2f, Loan: %.2f\n",
                        a.account_number, a.name, a.surname, a.pesel, a.balance, a.loan);
                 found = 1;
@@ -350,6 +449,7 @@ void search_accounts()
         break;
     default:
         printf("Invalid option.\n");
+        fclose(file);
         return;
     }
 
@@ -357,6 +457,7 @@ void search_accounts()
     {
         printf("No matching accounts found.\n");
     }
+    fclose(file);
 }
 
 bool confirm_operation(const char *operation)
@@ -381,26 +482,38 @@ void deposit()
     if (!acc)
     {
         printf("Account not found.\n");
-        return;
+        goto exit;
     }
 
     double amt;
     printf("Enter amount to deposit: ");
     scanf("%lf", &amt);
-    if (!is_valid_amount(amt))
+    if (amt <= 0)
     {
         printf("Invalid amount.\n");
-        return;
+        goto exit;
     }
 
     if (!confirm_operation("make a deposit"))
     {
         printf("Deposit cancelled.\n");
-        return;
+        goto exit;
     }
 
     acc->balance += amt;
-    printf("Deposit successful. New balance: %.2f\n", acc->balance);
+
+    if (update_account_in_file(FILENAME, acc))
+    {
+        printf("Deposit successful. New balance: %.2f\n", acc->balance);
+    }
+    else
+    {
+        printf("[E] Failed to deposit!\n");
+    }
+
+exit:
+    free(acc);
+    return;
 }
 
 void withdraw()
@@ -435,12 +548,21 @@ void withdraw()
     }
 
     acc->balance -= amt;
-    printf("Withdrawal successful. New balance: %.2f\n", acc->balance);
+    if (update_account_in_file(FILENAME, acc))
+    {
+        printf("Withdrawal successful. New balance: %.2f\n", acc->balance);
+    }
+    else
+    {
+        printf("[E] Failed to withdraw!\n");
+    }
+
+    free(acc);
 }
 
 void log_transfer(int from, int to, double amount)
 {
-    FILE *file = fopen("transfers.txt", "a");
+    FILE *file = fopen(TRANSFERS_FILENAME, "a");
     if (!file)
     {
         printf("Failed to log transfer.\n");
@@ -471,6 +593,10 @@ void transfer()
     if (!acc1 || !acc2)
     {
         printf("One of the accounts not found.\n");
+        if (acc1)
+            free(acc1);
+        if (acc2)
+            free(acc2);
         return;
     }
 
@@ -480,19 +606,36 @@ void transfer()
     if (!is_valid_amount(amt) || amt > acc1->balance)
     {
         printf("Invalid or insufficient funds.\n");
-        return;
+        goto cleanup;
     }
 
     if (!confirm_operation("make a transfer"))
     {
         printf("Transfer cancelled.\n");
-        return;
+        goto cleanup;
     }
 
     acc1->balance -= amt;
     acc2->balance += amt;
     log_transfer(from, to, amt);
+
+    if (!update_account_in_file(FILENAME, acc1))
+    {
+        printf("[E] Failed to transfer acc1!\n");
+        goto cleanup;
+    }
+
+    if (!update_account_in_file(FILENAME, acc2))
+    {
+        printf("[E] Failed to transfer acc2!\n");
+        goto cleanup;
+    }
+
     printf("Transfer successful.\n");
+
+cleanup:
+    free(acc1);
+    free(acc2);
 }
 
 void take_loan()
@@ -532,7 +675,17 @@ void take_loan()
     double total = amt + (amt * rate / 100);
     acc->loan += total;
     acc->balance += amt;
-    printf("Loan granted. Total debt: %.2f. New balance: %.2f\n", acc->loan, acc->balance);
+
+    if (update_account_in_file(FILENAME, acc))
+    {
+        printf("Loan granted. Total debt: %.2f. New balance: %.2f\n", acc->loan, acc->balance);
+    }
+    else
+    {
+        printf("[E] Failed to take a loan!\n");
+    }
+
+    free(acc);
 }
 
 void pay_debt()
@@ -554,12 +707,14 @@ void pay_debt()
     if (acc->loan == 0)
     {
         printf("No debt to pay.\n");
+        free(acc);
         return;
     }
 
     if (!confirm_operation("pay debt"))
     {
         printf("Debt payment cancelled.\n");
+        free(acc);
         return;
     }
 
@@ -567,20 +722,21 @@ void pay_debt()
     {
         acc->balance -= acc->loan;
         acc->loan = 0;
-        printf("Debt paid in full. Remaining balance: %.2f\n", acc->balance);
+        if (update_account_in_file(FILENAME, acc))
+        {
+            printf("Debt paid in full. Remaining balance: %.2f\n", acc->balance);
+        }
+        else
+        {
+            printf("[E] Failed to update account after paying debt!\n");
+        }
     }
     else
     {
         printf("Insufficient funds to pay debt. You owe: %.2f\n", acc->loan);
     }
-}
 
-void free_accounts()
-{
-    free(accounts);
-    accounts = NULL;
-    account_count = 0;
-    accounts_capacity = 0;
+    free(acc);
 }
 
 void menu()
@@ -597,7 +753,8 @@ void menu()
         switch (choice)
         {
         case 1:
-            create_account();
+            if (create_account())
+                printf("[E] Failed to create account\n");
             break;
         case 2:
             list_accounts();
@@ -631,11 +788,6 @@ void menu()
 
 int main()
 {
-    load_accounts_from_file("accounts.txt");
-
     menu();
-
-    save_accounts_to_file("accounts.txt");
-    free_accounts();
     return 0;
 }
