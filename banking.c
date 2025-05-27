@@ -177,11 +177,13 @@ int create_account()
     printf("Enter PESEL: ");
     flush_input();
     scanf(" %11s", new_acc.pesel);
+    flush_input();
     while (!is_valid_pesel(new_acc.pesel))
     {
         printf("Invalid PESEL. Try again: ");
         flush_input();
         scanf(" %11s", new_acc.pesel);
+        flush_input();
     }
 
     while (pesel_exists(new_acc.pesel))
@@ -193,13 +195,19 @@ int create_account()
     new_acc.balance = 0.0;
     new_acc.loan = 0.0;
 
-    file = fopen(FILENAME, "a");
+    file = fopen(FILENAME, "a+");
     if (!file)
     {
         printf("[E] Failed to open file for writing.\n");
         return -1;
     }
-    fprintf(file, "%d|%s|%s|%s|%s|%.2f|%.2f\n",
+
+    fseek(file, 0, SEEK_END);
+    long filesize = ftell(file);
+    if (filesize > 0)
+        fprintf(file, "\n");
+
+    fprintf(file, "%d|%s|%s|%s|%s|%.2f|%.2f",
             new_acc.account_number, new_acc.name, new_acc.surname,
             new_acc.address, new_acc.pesel, new_acc.balance, new_acc.loan);
     fclose(file);
