@@ -5,6 +5,7 @@
 #include <stdbool.h>
 
 #define FILENAME "accounts.txt"
+#define TRANSFERS_FILENAME "transfers.txt"
 #define NAME_MAX_LEN 50
 #define SURNAME_MAX_LEN 50
 #define ADDRESS_MAX_LEN 200
@@ -30,11 +31,6 @@ typedef struct
     double balance;
     double loan;
 } Account;
-
-Account *accounts = NULL;
-int next_account_number = ACCOUNT_NUMBER_START;
-int account_count = 0;
-int accounts_capacity = 0;
 
 int is_valid_pesel(const char *pesel)
 {
@@ -132,7 +128,6 @@ int pesel_exists(const char *pesel)
 int create_account()
 {
     Account new_acc;
-    // Generate account number by finding the max in file
     int max_account_number = 1000;
     FILE *file = fopen(FILENAME, "r");
     if (file)
@@ -188,7 +183,7 @@ int create_account()
         flush_input();
         scanf(" %11s", new_acc.pesel);
     }
-    pesel_exists(new_acc.pesel);
+
     while (pesel_exists(new_acc.pesel))
     {
         printf("PESEL already exists. Please enter a different PESEL: ");
@@ -274,7 +269,6 @@ void list_accounts()
     printf("\n--- End ---\n");
 }
 
-// TODO: refactor to use read from file
 Account *find_account_by_number(int number)
 {
     return load_account_from_file(number);
@@ -560,7 +554,7 @@ void withdraw()
 
 void log_transfer(int from, int to, double amount)
 {
-    FILE *file = fopen("transfers.txt", "a");
+    FILE *file = fopen(TRANSFERS_FILENAME, "a");
     if (!file)
     {
         printf("Failed to log transfer.\n");
@@ -604,17 +598,13 @@ void transfer()
     if (!is_valid_amount(amt) || amt > acc1->balance)
     {
         printf("Invalid or insufficient funds.\n");
-        free(acc1);
-        free(acc2);
-        return;
+        goto cleanup;
     }
 
     if (!confirm_operation("make a transfer"))
     {
         printf("Transfer cancelled.\n");
-        free(acc1);
-        free(acc2);
-        return;
+        goto cleanup;
     }
 
     acc1->balance -= amt;
@@ -624,22 +614,20 @@ void transfer()
     if (!update_account_in_file(FILENAME, acc1))
     {
         printf("[E] Failed to transfer acc1!\n");
-        free(acc1);
-        free(acc2);
-        return;
+        goto cleanup;
     }
 
     if (!update_account_in_file(FILENAME, acc2))
     {
         printf("[E] Failed to transfer acc2!\n");
-        free(acc1);
-        free(acc2);
-        return;
+        goto cleanup;
     }
 
+    printf("Transfer successful.\n");
+
+cleanup:
     free(acc1);
     free(acc2);
-    printf("Transfer successful.\n");
 }
 
 void take_loan()
